@@ -15,6 +15,8 @@ try:
     import string
     import ast
     import multiprocessing
+    import re
+    import collections
     from swsscommon import swsscommon
     from sonic_daemon_base import daemon_base
     from sonic_daemon_base.daemon_base import Logger
@@ -485,13 +487,16 @@ def get_media_settings_value(physical_port, key):
 
             # If there is a match in the global profile for a media type,
             # fetch those values
-            if key[0] in media_dict:
-                return media_dict[key[0]]
-            elif key[1] in media_dict:
-                return media_dict[key[1]]
-            elif "Default" in media_dict:
-                default_dict = media_dict['Default']
+            for txr_key in media_dict:
+                for k in key:
+                    if (k in txr_key.split(',') or
+                        re.match(txr_key, k) is not None
+                        ):
+                        return media_dict[txr_key]
 
+            if "Default" in media_dict:
+                default_dict = media_dict['Default']
+                
     media_dict = {}
 
     if "PORT_MEDIA_SETTINGS" in g_dict:
@@ -506,16 +511,22 @@ def get_media_settings_value(physical_port, key):
                 logger.log_error("Error: No values for physical port '%d'"
                                   % physical_port)
             return {}
-        if key[0] in media_dict:
-            return media_dict[key[0]]
-        elif key[1] in media_dict:
-            return media_dict[key[1]]
-        elif "Default" in media_dict:
+
+        for txr_key in media_dict:
+            for k in key:
+                if (k in txr_key.split(',') or
+                    re.match(txr_key, k) is not None
+                    ):
+                    return media_dict[txr_key]
+
+        if "Default" in media_dict:
             return media_dict['Default']
         elif len(default_dict) != 0:
             return default_dict
         else:
             return {}
+
+
     else:
        if default_dict != 0:
             return default_dict
@@ -550,8 +561,24 @@ def get_media_settings_key(physical_port, transceiver_dict):
         if len(media_len) != 0:
             media_key += '-' + media_len + 'M'
 
-    return [vendor_key, media_key]
+    result = [vendor_key, media_key]
 
+    try:
+        # Also return enhanced key, if enhanced transceiver_dict fields are available
+
+        d = transceiver_dict[physical_port]
+        media_interface = d['media_interface']
+        form_factor_media_if_key = '{}-{}'.format(d['form_factor'], media_interface)
+        if media_interface == 'CR':
+            form_factor_media_if_key = '{}-{}'.format(form_factor_media_if_key, d['cable_length_detailed'])
+
+        result.append(form_factor_media_if_key)
+    except:
+        pass
+
+    return result
+
+    
 def get_media_val_str_from_dict(media_dict):
     media_str = ''
     lane_str = 'lane'
@@ -636,7 +663,7 @@ def notify_media_setting(logical_port_name, transceiver_dict,
 
         index = 0
         for media_key in media_dict:
-            if type(media_dict[media_key]) is dict:
+            if type(media_dict[media_key]) is collections.OrderedDict:
                 media_val_str = get_media_val_str(num_logical_ports, \
                                                   media_dict[media_key],
                                                   logical_idx)
@@ -1048,7 +1075,7 @@ class DaemonXcvrd(DaemonBase):
 
         media_file = open(media_settings_file_path, "r")
         media_settings = media_file.read()
-        g_dict = json.loads(media_settings)
+        g_dict = json.loads(media_settings, object_pairs_hook=collections.OrderedDict)
 
     # Initialize daemon
     def init(self):
